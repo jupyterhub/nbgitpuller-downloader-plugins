@@ -17,5 +17,3 @@ def handle_files(helper_args, query_line_args):
     result_handle, _ = loop.run_until_complete(asyncio.gather(*tasks))
 
     return result_handle
-
-    return { "repo": helper_args["repo"], }
