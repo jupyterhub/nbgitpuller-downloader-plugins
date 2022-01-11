@@ -1,8 +1,14 @@
-from nbgitpuller.plugin_hook_specs import hookimpl
-from nbgitpuller_downloader_plugins_util.plugin_helper import HandleFilesHelper
 import re
 import asyncio
 import aiohttp
+import nest_asyncio
+from nbgitpuller.plugin_hook_specs import hookimpl
+from nbgitpuller_downloader_plugins_util.plugin_helper import HandleFilesHelper
+
+# this allows us to nest usage of the event_loop from asyncio
+# being used by tornado in jupyter distro
+# Ref: https://medium.com/@vyshali.enukonda/how-to-get-around-runtimeerror-this-event-loop-is-already-running-3f26f67e762e
+nest_asyncio.apply()
 
 DOWNLOAD_URL = "https://docs.google.com/uc?export=download"
 
@@ -78,31 +84,31 @@ async def download_archive_for_google(repo=None, temp_download_file=None):
     """
     yield "Downloading archive ...\n"
     try:
-        id = get_id(repo)
-        CHUNK_SIZE = 1024
+        file_id = get_id(repo)
+        chunk_size = 1024
         async with aiohttp.ClientSession() as session:
-            async with session.get(DOWNLOAD_URL, params={'id': id}) as response:
+            async with session.get(DOWNLOAD_URL, params={'id': file_id}) as response:
                 token = get_confirm_token(session, repo)
                 if token:
-                    params = {'id': id, 'confirm': token}
+                    params = {'id': file_id, 'confirm': token}
                     response = await session.get(repo, params=params)
-                with open(temp_download_file, 'ab') as fd:
+                with open(temp_download_file, 'ab') as file_handle:
                     count_chunks = 1
                     while True:
                         count_chunks += 1
                         if count_chunks % 1000 == 0:
                             display = count_chunks / 1000
                             yield f"Downloading Progress ... {display}MB\n"
-                        chunk = await response.content.read(CHUNK_SIZE)
+                        chunk = await response.content.read(chunk_size)
                         if not chunk:
                             break
-                        fd.write(chunk)
+                        file_handle.write(chunk)
         yield "Archive Downloaded....\n"
-    except Exception as e:
-        raise e
+    except Exception as ex:
+        raise ex
 
 
-async def get_response_from_drive(url, id):
+async def get_response_from_drive(url, file_id):
     """
     You need to check to see that Google Drive has not asked the
     request to confirm that they disabled the virus scan on files that
@@ -112,15 +118,15 @@ async def get_response_from_drive(url, id):
     parameter.
 
     :param str url: the google download URL
-    :param str id: the google id of the file to download
+    :param str file_id: the google id of the file to download
     :return response object
     :rtype json object
     """
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params={'id': id}) as response:
+        async with session.get(url, params={'id': file_id}) as response:
             token = get_confirm_token(session, url)
             if token:
-                params = {'id': id, 'confirm': token}
+                params = {'id': file_id, 'confirm': token}
                 response = await session.get(url, params=params)
                 return response
             return response
@@ -140,6 +146,6 @@ def determine_file_extension_from_response(response):
         ext = fname.split(".")[1]
 
     if ext is None:
-        m = f"Could not determine compression type of: {content_disposition}"
-        raise Exception(m)
+        message = f"Could not determine compression type of: {content_disposition}"
+        raise Exception(message)
     return ext
