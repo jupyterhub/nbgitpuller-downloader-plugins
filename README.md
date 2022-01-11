@@ -17,6 +17,15 @@ This plugin expects URLs included in the nbgitpuller link to be in the following
 
 In all of these cases, the archive must be publicly available or "shared" with everyone in the case of Google Drive.
 
+## Plugin Development Notes
+Please note, that any nbgitpuller-downloader-plugin needs to have the following import and call:
+```
+import nest_asyncio
+nest_asyncio.apply()
+```
+This is needed to nest the async calls for your downloader-plugin into the current event loop being used in
+nbgitpuller. The three plugin's in this repo provide an example of the implementation.
+
 ## Installation
 
 ```shell

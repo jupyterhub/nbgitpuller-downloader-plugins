@@ -1,7 +1,13 @@
-from nbgitpuller_downloader_plugins_util.plugin_helper import HandleFilesHelper
-from nbgitpuller.plugin_hook_specs import hookimpl
 import asyncio
+import nest_asyncio
+from nbgitpuller.plugin_hook_specs import hookimpl
+from nbgitpuller_downloader_plugins_util.plugin_helper import HandleFilesHelper
 
+
+# this allows us to nest usage of the event_loop from asyncio
+# being used by tornado in jupyter distro
+# Ref: https://medium.com/@vyshali.enukonda/how-to-get-around-runtimeerror-this-event-loop-is-already-running-3f26f67e762e
+nest_asyncio.apply()
 
 @hookimpl
 def handle_files(helper_args, query_line_args):
