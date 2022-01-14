@@ -1,16 +1,9 @@
 import asyncio
-import nest_asyncio
 from nbgitpuller.plugin_hook_specs import hookimpl
 from nbgitpuller_downloader_plugins_util.plugin_helper import HandleFilesHelper
 
-
-# this allows us to nest usage of the event_loop from asyncio
-# being used by tornado in jupyter distro
-# Ref: https://medium.com/@vyshali.enukonda/how-to-get-around-runtimeerror-this-event-loop-is-already-running-3f26f67e762e
-nest_asyncio.apply()
-
 @hookimpl
-def handle_files(helper_args, query_line_args):
+async def handle_files(helper_args, query_line_args):
     """
     :param dict helper_args: the function, helper_args["progress_func"], that writes messages to
     the progress stream in the browser window and the download_q, helper_args["download_q"] the progress function uses.
@@ -19,8 +12,6 @@ def handle_files(helper_args, query_line_args):
     :rtype json object
     """
     query_line_args["repo"] = query_line_args["repo"].replace("dl=0", "dl=1")  # dropbox: download set to 1
-    loop = asyncio.get_event_loop()
     hfh = HandleFilesHelper(helper_args, query_line_args)
-    tasks = hfh.handle_files_helper(), helper_args["wait_for_sync_progress_queue"]()
-    result_handle, _ = loop.run_until_complete(asyncio.gather(*tasks))
+    result_handle, _ = await asyncio.gather(hfh.handle_files_helper(), helper_args["wait_for_sync_progress_queue"]())
     return result_handle

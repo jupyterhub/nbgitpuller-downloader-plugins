@@ -1,20 +1,14 @@
 import re
 import asyncio
 import aiohttp
-import nest_asyncio
 from nbgitpuller.plugin_hook_specs import hookimpl
 from nbgitpuller_downloader_plugins_util.plugin_helper import HandleFilesHelper
-
-# this allows us to nest usage of the event_loop from asyncio
-# being used by tornado in jupyter distro
-# Ref: https://medium.com/@vyshali.enukonda/how-to-get-around-runtimeerror-this-event-loop-is-already-running-3f26f67e762e
-nest_asyncio.apply()
 
 DOWNLOAD_URL = "https://docs.google.com/uc?export=download"
 
 
 @hookimpl
-def handle_files(helper_args, query_line_args):
+async def handle_files(helper_args, query_line_args):
     """
     This function calls nbgitpuller's handle_files_helper after first determining the
     file extension(e.g. zip, tar.gz, etc). Google Drive does not use the name of the file to
@@ -27,18 +21,16 @@ def handle_files(helper_args, query_line_args):
     :return two parameter json output_dir and origin_repo_path
     :rtype json object
     """
-    loop = asyncio.get_event_loop()
     repo = query_line_args["repo"]
     helper_args["download_q"].put_nowait("Determining type of archive...\n")
-    response = loop.run_until_complete(get_response_from_drive(DOWNLOAD_URL, get_id(repo)))
+    response = await get_response_from_drive(DOWNLOAD_URL, get_id(repo))
     ext = determine_file_extension_from_response(response)
     helper_args["download_q"].put_nowait(f"Archive is: {ext}\n")
     helper_args["extension"] = ext
     helper_args["download_func"] = download_archive_for_google
 
     hfh = HandleFilesHelper(helper_args, query_line_args)
-    tasks = hfh.handle_files_helper(), helper_args["wait_for_sync_progress_queue"]()
-    result_handle, _ = loop.run_until_complete(asyncio.gather(*tasks))
+    result_handle, _ = await asyncio.gather(hfh.handle_files_helper(), helper_args["wait_for_sync_progress_queue"]())
     return result_handle
 
 
@@ -61,7 +53,7 @@ def get_confirm_token(session, url):
     confirmation token and uses it to complete the download.
 
     :param aiohttp.ClientSession session: used to the get the cookies from the reponse
-    :param str url : the url is used to filter out the correct cookies from the session
+    :param aiohttp.URL url : the url is used to filter out the correct cookies from the session
     :return the cookie if found or None if not found
     :rtype str
     """
@@ -135,11 +127,12 @@ async def get_response_from_drive(url, file_id):
 def determine_file_extension_from_response(response):
     """
     This retrieves the file extension from the response.
-    :param str response: the response object from the download
+    :param aiohttp.ClientResponse response: the response object from the download
     :return the extension indicating the file compression(e.g. zip, tgz)
     :rtype str
     """
     content_disposition = response.headers.get('content-disposition')
+    ext = None
     if content_disposition:
         fname = re.findall("filename\\*?=([^;]+)", content_disposition)
         fname = fname[0].strip().strip('"')
