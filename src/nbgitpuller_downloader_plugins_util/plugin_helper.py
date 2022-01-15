@@ -1,8 +1,7 @@
 import string
 import os
 import logging
-import aiohttp
-import asyncio
+import requests
 import subprocess
 import shutil
 from urllib.parse import urlparse
@@ -14,7 +13,7 @@ import tempfile
 CACHED_ORIGIN_NON_GIT_REPO = ".nbgitpuller/targets/"
 
 
-async def execute_cmd(cmd, **kwargs):
+def execute_cmd(cmd, **kwargs):
     """
     Call given command, yielding output line by line
 
@@ -53,7 +52,7 @@ async def execute_cmd(cmd, **kwargs):
             raise subprocess.CalledProcessError(ret, cmd)
 
 
-async def initialize_local_repo(local_repo_path):
+def initialize_local_repo(local_repo_path):
     """
     Sets up the a local repo that acts like a remote; yields the
     output from the git init
@@ -63,11 +62,11 @@ async def initialize_local_repo(local_repo_path):
     yield "Initializing repo ...\n"
     logging.info(f"Creating local_repo_path: {local_repo_path}")
     os.makedirs(local_repo_path, exist_ok=True)
-    async for e in execute_cmd(["git", "init", "--bare", "--initial-branch=main"], cwd=local_repo_path):
+    for e in execute_cmd(["git", "init", "--bare", "--initial-branch=main"], cwd=local_repo_path):
         yield e
 
 
-async def clone_local_origin_repo(origin_repo_path, temp_download_repo):
+def clone_local_origin_repo(origin_repo_path, temp_download_repo):
     """
     Cloned the origin(which is local) to the folder, temp_download_repo.
     The folder, temp_download_repo, acts like the space where someone makes changes
@@ -86,7 +85,7 @@ async def clone_local_origin_repo(origin_repo_path, temp_download_repo):
     os.makedirs(temp_download_repo, exist_ok=True)
 
     cmd = ["git", "clone", f"file://{origin_repo_path}", temp_download_repo]
-    async for e in execute_cmd(cmd, cwd=temp_download_repo):
+    for e in execute_cmd(cmd, cwd=temp_download_repo):
         yield e
 
 
@@ -105,7 +104,7 @@ def extract_file_extension(url):
     raise Exception(f"Could not determine compression type of: {url}")
 
 
-async def execute_unarchive(ext, temp_download_file, temp_download_repo):
+def execute_unarchive(ext, temp_download_file, temp_download_repo):
     """
     un-archives file using unzip or tar to the temp_download_repo
 
@@ -117,11 +116,11 @@ async def execute_unarchive(ext, temp_download_file, temp_download_repo):
         cmd_arr = ['unzip', "-qo", temp_download_file, "-d", temp_download_repo]
     else:
         cmd_arr = ['tar', 'xzf', temp_download_file, '-C', temp_download_repo]
-    async for e in execute_cmd(cmd_arr, cwd=temp_download_repo):
+    for e in execute_cmd(cmd_arr, cwd=temp_download_repo):
         yield e
 
 
-async def download_archive(repo=None, temp_download_file=None):
+def download_archive(repo=None, temp_download_file=None):
     """
     This requests the file from the repo(url) given and saves it to the disk
 
@@ -129,35 +128,28 @@ async def download_archive(repo=None, temp_download_file=None):
     :param str temp_download_file: the path to save the requested file to
     """
     yield "Downloading archive ...\n"
-    try:
-        CHUNK_SIZE = 1024
-        async with aiohttp.ClientSession() as session:
-            async with session.get(repo) as response:
-                with open(temp_download_file, 'ab') as fd:
-                    count_chunks = 1
-                    while True:
-                        count_chunks += 1
-                        if count_chunks % 1000 == 0:
-                            display = count_chunks / 1000
-                            yield f"Downloading Progress ... {display}MB\n"
-                        chunk = await response.content.read(CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        fd.write(chunk)
-    except Exception as e:
-        raise e
+    with requests.get(repo, stream=True) as r:
+        with open(temp_download_file, 'ab') as f:
+            count_chunks = 1
+            for chunk in r.iter_content(chunk_size=1024):
+                if chunk:
+                    count_chunks += 1
+                    if count_chunks % 1000 == 0:
+                        display = count_chunks / 1000
+                        yield f"Downloading Progress ... {display}MB\n"
+                    f.write(chunk)
 
     yield "Archive Downloaded....\n"
 
 
-async def push_to_local_origin(temp_download_repo):
+def push_to_local_origin(temp_download_repo):
     """
     The unarchived files are pushed back to the origin
 
     :param str temp_download_repo: the current working directly of folder
     where the archive had been downloaded and unarchived
     """
-    async for e in execute_cmd(["git", "add", "."], cwd=temp_download_repo):
+    for e in execute_cmd(["git", "add", "."], cwd=temp_download_repo):
         yield e
     commit_cmd = [
         "git",
@@ -165,9 +157,9 @@ async def push_to_local_origin(temp_download_repo):
         "-c", "user.name=nbgitpuller",
         "commit", "-q", "-m", "test", "--allow-empty"
     ]
-    async for e in execute_cmd(commit_cmd, cwd=temp_download_repo):
+    for e in execute_cmd(commit_cmd, cwd=temp_download_repo):
         yield e
-    async for e in execute_cmd(["git", "push", "origin", "main"], cwd=temp_download_repo):
+    for e in execute_cmd(["git", "push", "origin", "main"], cwd=temp_download_repo):
         yield e
 
 
@@ -200,7 +192,6 @@ class HandleFilesHelper:
         self.content_provider = query_line_args["contentProvider"]
         self.repo = query_line_args["repo"]
         self.repo_parent_dir = helper_args["repo_parent_dir"]
-        self.download_q = helper_args["download_q"]
         self.origin_repo = f"{self.repo_parent_dir}{CACHED_ORIGIN_NON_GIT_REPO}{self.content_provider}/{self.url}/"
         self.temp_download_dir = tempfile.TemporaryDirectory()
 
@@ -226,7 +217,7 @@ class HandleFilesHelper:
             helper_args["download_func_params"]["temp_download_file"] = self.temp_download_file
             self.download_args = helper_args["download_func_params"]
 
-    async def handle_download_and_extraction(self):
+    def handle_download_and_extraction(self):
         """
         This does all the heavy lifting in the order needed to set up your local
         repos, the local origin, download the file, and decompress the file. When this process completes,
@@ -238,20 +229,20 @@ class HandleFilesHelper:
 
         try:
             if not os.path.exists(self.origin_repo):
-                async for progress_msg in initialize_local_repo(self.origin_repo):
+                for progress_msg in initialize_local_repo(self.origin_repo):
                     yield progress_msg
 
-            async for progress_msg in clone_local_origin_repo(self.origin_repo, self.temp_download_dir.name):
+            for progress_msg in clone_local_origin_repo(self.origin_repo, self.temp_download_dir.name):
                 yield progress_msg
 
-            async for progress_msg in self.download_func(**self.download_args):
+            for progress_msg in self.download_func(**self.download_args):
                 yield progress_msg
 
-            async for progress_msg in execute_unarchive(self.ext, self.temp_download_file, self.temp_download_dir.name):
+            for progress_msg in execute_unarchive(self.ext, self.temp_download_file, self.temp_download_dir.name):
                 yield progress_msg
 
             os.remove(self.temp_download_file)
-            async for progress_msg in push_to_local_origin(self.temp_download_dir.name):
+            for progress_msg in push_to_local_origin(self.temp_download_dir.name):
                 yield progress_msg
 
             unzipped_dirs = os.listdir(self.temp_download_dir.name)
@@ -268,22 +259,15 @@ class HandleFilesHelper:
         finally:
             self.temp_download_dir.cleanup() # remove temporary download space
 
-    async def handle_files_helper(self):
+    def handle_files_helper(self):
         """
-        This calls the async generator function and handle the storing of messages from the gener() function
-        into the download_q
+        This calls the generator function handle_download_and_extraction. All the messages that are "yielded" here
+        are being shown in the UI to help the user understand the progress being made and any errors that might occur.
 
-        :return json object with the directory name of the download and
-        the origin_repo_path
+        :return json object with the directory name of the download and the origin_repo_path
         :rtype json object
         """
-        try:
-            async for line in self.handle_download_and_extraction():
-                self.download_q.put_nowait(line)
-                await asyncio.sleep(0.1)
-        except Exception as e:
-            self.download_q.put_nowait(e)
-            raise e
-        # mark the end of the queue with a None value
-        self.download_q.put_nowait(None)
+        for line in self.handle_download_and_extraction():
+            yield line
+
         return {"output_dir": self.dir_names[0], "origin_repo_path": self.origin_repo}

@@ -1,0 +1,8 @@
+[FORMAT]
+max-line-length=150
+good-names=i,j,k,ex,x,y
+
+[MASTER]
+disable=
+    C0114, # missing-module-docstring
+

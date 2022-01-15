@@ -1,9 +1,9 @@
-import asyncio
 from nbgitpuller.plugin_hook_specs import hookimpl
 from nbgitpuller_downloader_plugins_util.plugin_helper import HandleFilesHelper
 
+
 @hookimpl
-async def handle_files(helper_args, query_line_args):
+def handle_files(helper_args, query_line_args):
     """
     This begins the event loop that will both download the compressed archive and send messages
     about the progress of the download to the UI.
@@ -14,5 +14,5 @@ async def handle_files(helper_args, query_line_args):
     :rtype json object
     """
     hfh = HandleFilesHelper(helper_args, query_line_args)
-    result_handle, _ = await asyncio.gather(hfh.handle_files_helper(), helper_args["wait_for_sync_progress_queue"]())
-    return result_handle
+    output_info = yield from hfh.handle_files_helper()
+    helper_args["handle_files_output"] = output_info

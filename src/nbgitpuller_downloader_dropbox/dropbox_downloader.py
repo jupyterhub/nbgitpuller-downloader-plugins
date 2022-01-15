@@ -1,9 +1,9 @@
-import asyncio
 from nbgitpuller.plugin_hook_specs import hookimpl
 from nbgitpuller_downloader_plugins_util.plugin_helper import HandleFilesHelper
 
+
 @hookimpl
-async def handle_files(helper_args, query_line_args):
+def handle_files(helper_args, query_line_args):
     """
     :param dict helper_args: the function, helper_args["progress_func"], that writes messages to
     the progress stream in the browser window and the download_q, helper_args["download_q"] the progress function uses.
@@ -13,5 +13,5 @@ async def handle_files(helper_args, query_line_args):
     """
     query_line_args["repo"] = query_line_args["repo"].replace("dl=0", "dl=1")  # dropbox: download set to 1
     hfh = HandleFilesHelper(helper_args, query_line_args)
-    result_handle, _ = await asyncio.gather(hfh.handle_files_helper(), helper_args["wait_for_sync_progress_queue"]())
-    return result_handle
+    output_info = yield from hfh.handle_files_helper()
+    helper_args["handle_files_output"] = output_info
