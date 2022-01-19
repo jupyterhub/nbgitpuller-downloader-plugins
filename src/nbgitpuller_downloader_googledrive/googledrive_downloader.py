@@ -1,45 +1,35 @@
 import re
-import asyncio
-import aiohttp
-import nest_asyncio
+import requests
 from nbgitpuller.plugin_hook_specs import hookimpl
 from nbgitpuller_downloader_plugins_util.plugin_helper import HandleFilesHelper
-
-# this allows us to nest usage of the event_loop from asyncio
-# being used by tornado in jupyter distro
-# Ref: https://medium.com/@vyshali.enukonda/how-to-get-around-runtimeerror-this-event-loop-is-already-running-3f26f67e762e
-nest_asyncio.apply()
 
 DOWNLOAD_URL = "https://docs.google.com/uc?export=download"
 
 
 @hookimpl
-def handle_files(helper_args, query_line_args):
+def handle_files(repo_parent_dir, other_kw_args):
     """
     This function calls nbgitpuller's handle_files_helper after first determining the
     file extension(e.g. zip, tar.gz, etc). Google Drive does not use the name of the file to
     identify the file on the URL so we must download the file first to get the extension from the
     response, set up a specialized download function and parameters and then pass off handling
     to nbgitpuller.
-    :param dict helper_args: the function, helper_args["progress_func"], that writes messages to
-    the progress stream in the browser window and the download_q, helper_args["download_q"] the progress function uses.
-    :param dict query_line_args: this includes all the arguments included on the nbgitpuller URL
+    :param str repo_parent_dir: the directory where the archive is downloaded to
+    :param dict other_kw_args: this includes all the arguments included on the nbgitpuller URL or passed via CLI
     :return two parameter json output_dir and origin_repo_path
     :rtype json object
     """
-    loop = asyncio.get_event_loop()
-    repo = query_line_args["repo"]
-    helper_args["download_q"].put_nowait("Determining type of archive...\n")
-    response = loop.run_until_complete(get_response_from_drive(DOWNLOAD_URL, get_id(repo)))
+    repo = other_kw_args["repo"]
+    yield "Determining type of archive...\n"
+    response = get_response_from_drive(DOWNLOAD_URL, get_id(repo))
     ext = determine_file_extension_from_response(response)
-    helper_args["download_q"].put_nowait(f"Archive is: {ext}\n")
-    helper_args["extension"] = ext
-    helper_args["download_func"] = download_archive_for_google
+    yield f"Archive is: {ext}\n"
+    other_kw_args["extension"] = ext
+    other_kw_args["download_func"] = download_archive_for_google
 
-    hfh = HandleFilesHelper(helper_args, query_line_args)
-    tasks = hfh.handle_files_helper(), helper_args["wait_for_sync_progress_queue"]()
-    result_handle, _ = loop.run_until_complete(asyncio.gather(*tasks))
-    return result_handle
+    hfh = HandleFilesHelper(repo_parent_dir, other_kw_args)
+    output_info = yield from hfh.handle_files_helper()
+    other_kw_args["handle_files_output"] = output_info
 
 
 def get_id(repo):
@@ -55,24 +45,23 @@ def get_id(repo):
     return repo[start_id_index:end_id_index]
 
 
-def get_confirm_token(session, url):
+def get_confirm_token(session):
     """
     Google may include a confirm dialog if the file is too big. This retreives the
     confirmation token and uses it to complete the download.
 
-    :param aiohttp.ClientSession session: used to the get the cookies from the reponse
-    :param str url : the url is used to filter out the correct cookies from the session
+    :param requests.Session session: used to the get the cookies from the reponse
     :return the cookie if found or None if not found
     :rtype str
     """
-    cookies = session.cookie_jar.filter_cookies(url)
+    cookies = session.cookies
     for key, cookie in cookies.items():
         if key.startswith('download_warning'):
             return cookie
     return None
 
 
-async def download_archive_for_google(repo=None, temp_download_file=None):
+def download_archive_for_google(repo=None, temp_download_file=None):
     """
     This requests the file from the repo(url) given and saves it to the disk. This is executed
     in plugin_helper.py and note that the parameters to this function are the same as the standard
@@ -85,30 +74,26 @@ async def download_archive_for_google(repo=None, temp_download_file=None):
     yield "Downloading archive ...\n"
     try:
         file_id = get_id(repo)
-        chunk_size = 1024
-        async with aiohttp.ClientSession() as session:
-            async with session.get(DOWNLOAD_URL, params={'id': file_id}) as response:
-                token = get_confirm_token(session, repo)
+        with requests.Session() as session:
+            with session.get(DOWNLOAD_URL, params={'id': file_id}) as response:
+                token = get_confirm_token(session)
                 if token:
                     params = {'id': file_id, 'confirm': token}
-                    response = await session.get(repo, params=params)
-                with open(temp_download_file, 'ab') as file_handle:
+                    response = session.get(DOWNLOAD_URL, params=params)
+                with open(temp_download_file, 'ab') as f:
                     count_chunks = 1
-                    while True:
-                        count_chunks += 1
-                        if count_chunks % 1000 == 0:
-                            display = count_chunks / 1000
-                            yield f"Downloading Progress ... {display}MB\n"
-                        chunk = await response.content.read(chunk_size)
-                        if not chunk:
-                            break
-                        file_handle.write(chunk)
+                    for chunk in response.iter_content(chunk_size=1024):
+                        if chunk:
+                            count_chunks += 1
+                            if count_chunks % 1000 == 0:
+                                display = count_chunks / 1000
+                                yield f"Downloading Progress ... {display}MB\n"
+                            f.write(chunk)
         yield "Archive Downloaded....\n"
     except Exception as ex:
         raise ex
 
-
-async def get_response_from_drive(url, file_id):
+def get_response_from_drive(url, file_id):
     """
     You need to check to see that Google Drive has not asked the
     request to confirm that they disabled the virus scan on files that
@@ -122,12 +107,12 @@ async def get_response_from_drive(url, file_id):
     :return response object
     :rtype json object
     """
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, params={'id': file_id}) as response:
-            token = get_confirm_token(session, url)
+    with requests.Session() as session:
+        with session.get(url, params={'id': file_id}) as response:
+            token = get_confirm_token(session)
             if token:
                 params = {'id': file_id, 'confirm': token}
-                response = await session.get(url, params=params)
+                response = session.get(url, params=params)
                 return response
             return response
 
@@ -135,15 +120,16 @@ async def get_response_from_drive(url, file_id):
 def determine_file_extension_from_response(response):
     """
     This retrieves the file extension from the response.
-    :param str response: the response object from the download
+    :param requests.Response response: the response object from the download
     :return the extension indicating the file compression(e.g. zip, tgz)
     :rtype str
     """
     content_disposition = response.headers.get('content-disposition')
+    ext = None
     if content_disposition:
-        fname = re.findall("filename\\*?=([^;]+)", content_disposition)
-        fname = fname[0].strip().strip('"')
-        ext = fname.split(".")[1]
+        file_name = re.findall("filename\\*?=([^;]+)", content_disposition)
+        file_name = file_name[0].strip().strip('"')
+        ext = file_name.split(".")[1]
 
     if ext is None:
         message = f"Could not determine compression type of: {content_disposition}"
