@@ -6,30 +6,40 @@ from nbgitpuller_downloader_plugins_util.plugin_helper import HandleFilesHelper
 DOWNLOAD_URL = "https://docs.google.com/uc?export=download"
 
 
-@hookimpl
-def handle_files(repo_parent_dir, other_kw_args):
+class GoogleDriveDownloader:
     """
-    This function calls nbgitpuller's handle_files_helper after first determining the
-    file extension(e.g. zip, tar.gz, etc). Google Drive does not use the name of the file to
-    identify the file on the URL so we must download the file first to get the extension from the
-    response, set up a specialized download function and parameters and then pass off handling
-    to nbgitpuller.
-    :param str repo_parent_dir: the directory where the archive is downloaded to
-    :param dict other_kw_args: this includes all the arguments included on the nbgitpuller URL or passed via CLI
-    :return two parameter json output_dir and origin_repo_path
-    :rtype json object
+    This class encapsulates the handle_files function used by nbgitpuller to download compressed archives
+    from GoogleDrive. The one instance variable, handle_files_results, is accessed by nbgitpuller after handle_files
+    executes and contains the directory where the archive was decompressed to as well as the path to the local
+    origin git repo established for this download.
     """
-    repo = other_kw_args["repo"]
-    yield "Determining type of archive...\n"
-    response = get_response_from_drive(DOWNLOAD_URL, get_id(repo))
-    ext = determine_file_extension_from_response(response)
-    yield f"Archive is: {ext}\n"
-    other_kw_args["extension"] = ext
-    other_kw_args["download_func"] = download_archive_for_google
+    def __init__(self):
+        self.handle_files_results = None
 
-    hfh = HandleFilesHelper(repo_parent_dir, other_kw_args)
-    output_info = yield from hfh.handle_files_helper()
-    other_kw_args["handle_files_output"] = output_info
+    @hookimpl
+    def handle_files(self, repo_parent_dir, other_kw_args):
+        """
+        This function calls nbgitpuller's handle_files_helper after first determining the
+        file extension(e.g. zip, tar.gz, etc). Google Drive does not use the name of the file to
+        identify the file on the URL so we must download the file first to get the extension from the
+        response, set up a specialized download function and parameters and then pass off handling
+        to nbgitpuller.
+        :param str repo_parent_dir: the directory where the archive is downloaded to
+        :param dict other_kw_args: this includes all the arguments included on the nbgitpuller URL or passed via CLI
+        :return two parameter json output_dir and origin_repo_path
+        :rtype json object
+        """
+        repo = other_kw_args["repo"]
+        yield "Determining type of archive...\n"
+        response = get_response_from_drive(DOWNLOAD_URL, get_id(repo))
+        ext = determine_file_extension_from_response(response)
+        yield f"Archive is: {ext}\n"
+        other_kw_args["extension"] = ext
+        other_kw_args["download_func"] = download_archive_for_google
+
+        hfh = HandleFilesHelper(repo_parent_dir, other_kw_args)
+        output_info = yield from hfh.handle_files_helper()
+        self.handle_files_results = output_info
 
 
 def get_id(repo):
@@ -80,7 +90,7 @@ def download_archive_for_google(repo=None, temp_download_file=None):
                 if token:
                     params = {'id': file_id, 'confirm': token}
                     response = session.get(DOWNLOAD_URL, params=params)
-                with open(temp_download_file, 'ab') as f:
+                with open(temp_download_file, 'ab') as file_handle:
                     count_chunks = 1
                     for chunk in response.iter_content(chunk_size=1024):
                         if chunk:
@@ -88,7 +98,7 @@ def download_archive_for_google(repo=None, temp_download_file=None):
                             if count_chunks % 1000 == 0:
                                 display = count_chunks / 1000
                                 yield f"Downloading Progress ... {display}MB\n"
-                            f.write(chunk)
+                            file_handle.write(chunk)
         yield "Archive Downloaded....\n"
     except Exception as ex:
         raise ex
