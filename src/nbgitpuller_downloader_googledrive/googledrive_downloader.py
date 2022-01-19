@@ -7,30 +7,29 @@ DOWNLOAD_URL = "https://docs.google.com/uc?export=download"
 
 
 @hookimpl
-def handle_files(helper_args, query_line_args):
+def handle_files(repo_parent_dir, other_kw_args):
     """
     This function calls nbgitpuller's handle_files_helper after first determining the
     file extension(e.g. zip, tar.gz, etc). Google Drive does not use the name of the file to
     identify the file on the URL so we must download the file first to get the extension from the
     response, set up a specialized download function and parameters and then pass off handling
     to nbgitpuller.
-    :param dict helper_args: the function, helper_args["progress_func"], that writes messages to
-    the progress stream in the browser window and the download_q, helper_args["download_q"] the progress function uses.
-    :param dict query_line_args: this includes all the arguments included on the nbgitpuller URL
+    :param str repo_parent_dir: the directory where the archive is downloaded to
+    :param dict other_kw_args: this includes all the arguments included on the nbgitpuller URL or passed via CLI
     :return two parameter json output_dir and origin_repo_path
     :rtype json object
     """
-    repo = query_line_args["repo"]
+    repo = other_kw_args["repo"]
     yield "Determining type of archive...\n"
     response = get_response_from_drive(DOWNLOAD_URL, get_id(repo))
     ext = determine_file_extension_from_response(response)
     yield f"Archive is: {ext}\n"
-    helper_args["extension"] = ext
-    helper_args["download_func"] = download_archive_for_google
+    other_kw_args["extension"] = ext
+    other_kw_args["download_func"] = download_archive_for_google
 
-    hfh = HandleFilesHelper(helper_args, query_line_args)
+    hfh = HandleFilesHelper(repo_parent_dir, other_kw_args)
     output_info = yield from hfh.handle_files_helper()
-    helper_args["handle_files_output"] = output_info
+    other_kw_args["handle_files_output"] = output_info
 
 
 def get_id(repo):

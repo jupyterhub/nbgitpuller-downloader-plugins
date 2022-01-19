@@ -1,12 +1,12 @@
 import string
 import os
 import logging
-import requests
 import subprocess
 import shutil
+import tempfile
 from urllib.parse import urlparse
 from functools import partial
-import tempfile
+import requests
 
 # this is the path to the local origin repository that nbgitpuller uses to mimic
 # a remote repo in GitPuller
@@ -17,8 +17,8 @@ def execute_cmd(cmd, **kwargs):
     """
     Call given command, yielding output line by line
 
-    :param array cmd: the commands to be executed
-    :param json kwargs: potential keyword args included with command
+    :param arr cmd: the commands to be executed
+    :param [*] kwargs: potential keyword args included with command
     """
     yield '$ {}\n'.format(' '.join(cmd))
     kwargs['stdout'] = subprocess.PIPE
@@ -57,7 +57,7 @@ def initialize_local_repo(local_repo_path):
     Sets up the a local repo that acts like a remote; yields the
     output from the git init
 
-    :param str local_repo_path: the locla path where the git repo is initialized
+    :param str local_repo_path: the local path where the git repo is initialized
     """
     yield "Initializing repo ...\n"
     logging.info(f"Creating local_repo_path: {local_repo_path}")
@@ -157,10 +157,10 @@ def push_to_local_origin(temp_download_repo):
         "-c", "user.name=nbgitpuller",
         "commit", "-q", "-m", "test", "--allow-empty"
     ]
-    for e in execute_cmd(commit_cmd, cwd=temp_download_repo):
-        yield e
-    for e in execute_cmd(["git", "push", "origin", "main"], cwd=temp_download_repo):
-        yield e
+    for process_message in execute_cmd(commit_cmd, cwd=temp_download_repo):
+        yield process_message
+    for process_message in execute_cmd(["git", "push", "origin", "main"], cwd=temp_download_repo):
+        yield process_message
 
 
 class HandleFilesHelper:
@@ -168,39 +168,37 @@ class HandleFilesHelper:
     This class is needed to handle the use of dir_names inside the async generator as well as in the return object for
     the function handle_files_helper.
     """
-    def __init__(self, helper_args, query_line_args):
+    def __init__(self, repo_parent_dir, other_kw_args):
         """
-        This sets up the helper_args and query_line_args for use in the handle_files_helper and gener functions.
+        This sets up the repo_parent_dir and other_kw_args for use in the handle_files_helper and generator functions.
 
-        :param dict helper_args: key-value pairs including the:
-            - download_func download function
-            - download_func_params download parameters in the case
+        :param str repo_parent_dir: : the directory where the archive is downloaded to
+        :param dict other_kw_args: key-value pairs may include including the:
+            - repo,
+            - provider,
+            - repo_parent_dir,
+            - download_func [OPTIONAL] download function
+            - download_func_params [OPTIONAL] download parameters in the case
                 that the source needs to handle the download in a specific way(e.g. google
                 requires a confirmation of the download)
             - extension (e.g. zip, tar) ] [OPTIONAL] this may or may not be included. If the repo name contains
                 name of archive (e.g. example.zip) then this function can determine the extension for you; if not it
                 needs to be provided.
-        :param dict query_line_args:
-            - repo,
-            - provider,
-            - repo_parent_dir
-        :param helper_args:
-        :param query_line_args:
         """
         self.dir_names = None
-        self.url = query_line_args["repo"].translate(str.maketrans('', '', string.punctuation))
-        self.content_provider = query_line_args["contentProvider"]
-        self.repo = query_line_args["repo"]
-        self.repo_parent_dir = helper_args["repo_parent_dir"]
+        self.url = other_kw_args["repo"].translate(str.maketrans('', '', string.punctuation))
+        self.content_provider = other_kw_args["contentProvider"]
+        self.repo = other_kw_args["repo"]
+        self.repo_parent_dir = repo_parent_dir
         self.origin_repo = f"{self.repo_parent_dir}{CACHED_ORIGIN_NON_GIT_REPO}{self.content_provider}/{self.url}/"
         self.temp_download_dir = tempfile.TemporaryDirectory()
 
         # you can optionally pass the extension of your archive(e.g zip) if it is not identifiable from the URL file name
         # otherwise the extract_file_extension function will pull it off the repo name
-        if "extension" not in helper_args:
-            self.ext = extract_file_extension(query_line_args["repo"])
+        if "extension" not in other_kw_args:
+            self.ext = extract_file_extension(other_kw_args["repo"])
         else:
-            self.ext = helper_args['extension']
+            self.ext = other_kw_args['extension']
         self.temp_download_file = f"{self.temp_download_dir.name}/download.{self.ext}"
         self.download_func = download_archive
         self.download_args = {
@@ -211,11 +209,11 @@ class HandleFilesHelper:
         # you can pass your own download function as well as download function parameters
         # if they are different from the standard download function and parameters. Notice I add
         # the temp_download_file to the parameters
-        if "download_func" in helper_args:
-            self.download_func = helper_args["download_func"]
-        if "download_func_params" in helper_args:
-            helper_args["download_func_params"]["temp_download_file"] = self.temp_download_file
-            self.download_args = helper_args["download_func_params"]
+        if "download_func" in other_kw_args:
+            self.download_func = other_kw_args["download_func"]
+        if "download_func_params" in other_kw_args:
+            other_kw_args["download_func_params"]["temp_download_file"] = self.temp_download_file
+            self.download_args = other_kw_args["download_func_params"]
 
     def handle_download_and_extraction(self):
         """
@@ -247,17 +245,17 @@ class HandleFilesHelper:
 
             unzipped_dirs = os.listdir(self.temp_download_dir.name)
             # name of the extracted directory
-            self.dir_names = list(filter(lambda dir: ".git" not in dir and "__MACOSX" not in dir, unzipped_dirs))
+            self.dir_names = list(filter(lambda dir_name: ".git" not in dir_name and "__MACOSX" not in dir_name, unzipped_dirs))
 
             yield "\n\n"
             yield "Process Complete: Archive is finished importing into hub\n"
             yield f"The directory of your download is: {self.dir_names[0]}\n"
 
-        except Exception as e:
-            logging.exception(e)
-            raise ValueError(e)
+        except Exception as ex:
+            logging.exception(ex)
+            raise ValueError(ex)
         finally:
-            self.temp_download_dir.cleanup() # remove temporary download space
+            self.temp_download_dir.cleanup()  # remove temporary download space
 
     def handle_files_helper(self):
         """
